@@ -1,0 +1,20 @@
+# build outputs
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+Testing/
+CTestTestfile.cmake
+Makefile
+
+# editor
+.vscode/
+.idea/
+
+# artifacts
+*.log
+*.db
+*.wal
+
+# OS junk
+.DS_Store
