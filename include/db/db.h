@@ -3,6 +3,8 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <memory>
+#include "wal/wal_writer.h"
 
 namespace miniwaldb {
 
@@ -20,10 +22,15 @@ public:
 private:
   std::string dir_;
   std::unordered_map<std::int64_t, std::string> kv_;
+  std::string wal_path_;
+  std::unique_ptr<wal::WalWriter> wal_writer_;
 
   bool in_tx_{false};
+  wal::TxId next_txid_{1};
+  wal::TxId current_txid_{0};
 
   void ensure_dir_();
+  void recover_from_wal_();
 };
 
 } // namespace miniwaldb

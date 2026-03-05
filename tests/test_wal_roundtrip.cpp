@@ -27,7 +27,7 @@ TEST_CASE("WAL roundtrip writes and reads records") {
   std::filesystem::remove(path);
 }
 
-TEST_CASE("WAL reader stops at truncated tail record") {
+TEST_CASE("WAL reader stops at truncated mid-record tail") {
   const std::string path = "test_wal_truncated_tail.wal";
   std::filesystem::remove(path);
 
@@ -41,7 +41,9 @@ TEST_CASE("WAL reader stops at truncated tail record") {
 
   const auto full_size = std::filesystem::file_size(path);
   REQUIRE(full_size > 0);
-  std::filesystem::resize_file(path, full_size - 1);
+  // Last record is at least 21 bytes ([len][type+txid+payload_len][crc]).
+  // Truncate 8 bytes so the third record is definitely torn mid-record.
+  std::filesystem::resize_file(path, full_size - 8);
 
   miniwaldb::wal::WalReader r(path);
   auto recs = r.read_all();
