@@ -1,6 +1,9 @@
 #include "wal/wal_writer.h"
-#include "storage/file_io.h"
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace miniwaldb::wal {
 
@@ -32,11 +35,18 @@ WalWriter::WalWriter(std::string path) : path_(std::move(path)) {
   open_or_create_();
 }
 
-WalWriter::~WalWriter() = default;
+WalWriter::~WalWriter() {
+  if (fd_ != -1) {
+    ::close(fd_);
+    fd_ = -1;
+  }
+}
 
 void WalWriter::open_or_create_() {
-  // For now we don't keep an fd open; we append with a helper.
-  // Later: keep fd_ open and use pwrite/fsync.
+  fd_ = ::open(path_.c_str(), O_CREAT | O_APPEND | O_WRONLY, 0644);
+  if (fd_ == -1) {
+    throw std::runtime_error("failed to open WAL: " + path_ + ": " + std::strerror(errno));
+  }
 }
 
 Lsn WalWriter::append(const WalRecord& rec) {
@@ -52,7 +62,14 @@ Lsn WalWriter::append(const WalRecord& rec) {
   bytes.insert(bytes.end(), rec.payload.begin(), rec.payload.end());
   push_u32(bytes, crc32_ieee(bytes, frame_start, frame_len));
 
-  storage::write_file_append(path_, bytes);
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const auto n = ::write(fd_, bytes.data() + offset, bytes.size() - offset);
+    if (n < 0) {
+      throw std::runtime_error("failed to write WAL: " + path_ + ": " + std::strerror(errno));
+    }
+    offset += static_cast<std::size_t>(n);
+  }
   return next_lsn_++;
 }
 
@@ -61,7 +78,12 @@ void WalWriter::flush() {
 }
 
 void WalWriter::flush_on_commit() {
-  // placeholder
+  if (fd_ == -1) return;
+  if (::fdatasync(fd_) != 0) {
+    if (errno != EINVAL || ::fsync(fd_) != 0) {
+      throw std::runtime_error("failed to sync WAL: " + path_ + ": " + std::strerror(errno));
+    }
+  }
 }
 
 } // namespace miniwaldb::wal

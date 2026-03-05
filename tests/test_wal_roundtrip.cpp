@@ -53,3 +53,25 @@ TEST_CASE("WAL reader stops at truncated tail record") {
 
   std::filesystem::remove(path);
 }
+
+TEST_CASE("WAL flush_on_commit keeps data readable") {
+  const std::string path = "test_wal_flush_on_commit.wal";
+  std::filesystem::remove(path);
+
+  miniwaldb::wal::WalWriter w(path);
+  using miniwaldb::wal::RecordType;
+  using miniwaldb::wal::WalRecord;
+
+  w.append(WalRecord{RecordType::Begin, 42, {}});
+  w.append(WalRecord{RecordType::Commit, 42, {}});
+  w.flush_on_commit();
+
+  miniwaldb::wal::WalReader r(path);
+  auto recs = r.read_all();
+
+  REQUIRE(recs.size() == 2);
+  REQUIRE(recs[0].type == RecordType::Begin);
+  REQUIRE(recs[1].type == RecordType::Commit);
+
+  std::filesystem::remove(path);
+}
