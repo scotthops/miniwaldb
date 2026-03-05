@@ -77,3 +77,47 @@ TEST_CASE("WAL flush_on_commit keeps data readable") {
 
   std::filesystem::remove(path);
 }
+
+TEST_CASE("WAL flush_on_commit false does not call sync hook") {
+  const std::string path = "test_wal_flush_hook_disabled.wal";
+  std::filesystem::remove(path);
+
+  int sync_calls = 0;
+  miniwaldb::wal::WalWriter w(
+      path,
+      false,
+      [&sync_calls](int) {
+        ++sync_calls;
+        return 0;
+      });
+  using miniwaldb::wal::RecordType;
+  using miniwaldb::wal::WalRecord;
+
+  w.append(WalRecord{RecordType::Commit, 99, {}});
+  w.flush_on_commit();
+
+  REQUIRE(sync_calls == 0);
+  std::filesystem::remove(path);
+}
+
+TEST_CASE("WAL flush_on_commit true calls sync hook once") {
+  const std::string path = "test_wal_flush_hook_enabled.wal";
+  std::filesystem::remove(path);
+
+  int sync_calls = 0;
+  miniwaldb::wal::WalWriter w(
+      path,
+      true,
+      [&sync_calls](int) {
+        ++sync_calls;
+        return 0;
+      });
+  using miniwaldb::wal::RecordType;
+  using miniwaldb::wal::WalRecord;
+
+  w.append(WalRecord{RecordType::Commit, 100, {}});
+  w.flush_on_commit();
+
+  REQUIRE(sync_calls == 1);
+  std::filesystem::remove(path);
+}

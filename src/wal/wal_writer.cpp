@@ -30,8 +30,16 @@ static std::uint32_t crc32_ieee(const std::vector<std::uint8_t>& bytes,
   }
   return ~crc;
 }
+static int real_sync(int fd) {
+  if (::fdatasync(fd) == 0) return 0;
+  if (errno != EINVAL) return -1;
+  return ::fsync(fd);
+}
 
-WalWriter::WalWriter(std::string path) : path_(std::move(path)) {
+WalWriter::WalWriter(std::string path, bool flush_on_commit, SyncHook sync_hook)
+    : path_(std::move(path)),
+      flush_on_commit_enabled_(flush_on_commit),
+      sync_hook_(sync_hook ? std::move(sync_hook) : SyncHook(real_sync)) {
   open_or_create_();
 }
 
@@ -79,10 +87,9 @@ void WalWriter::flush() {
 
 void WalWriter::flush_on_commit() {
   if (fd_ == -1) return;
-  if (::fdatasync(fd_) != 0) {
-    if (errno != EINVAL || ::fsync(fd_) != 0) {
-      throw std::runtime_error("failed to sync WAL: " + path_ + ": " + std::strerror(errno));
-    }
+  if (!flush_on_commit_enabled_) return;
+  if (sync_hook_(fd_) != 0) {
+    throw std::runtime_error("failed to sync WAL: " + path_ + ": " + std::strerror(errno));
   }
 }
 
