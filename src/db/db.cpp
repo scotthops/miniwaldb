@@ -77,6 +77,8 @@ void Db::recover_from_wal_() {
     }
 
     if (rec.type == wal::RecordType::Set) {
+      auto pending_it = pending.find(rec.txid);
+      if (pending_it == pending.end()) continue;
       if (rec.payload.size() < 12) continue;
       std::size_t i = 0;
       std::int64_t key = 0;
@@ -88,7 +90,7 @@ void Db::recover_from_wal_() {
         value_len |= static_cast<std::uint32_t>(rec.payload[i++]) << (8 * k);
       }
       if (i + value_len > rec.payload.size()) continue;
-      pending[rec.txid].emplace_back(
+      pending_it->second.emplace_back(
           key,
           std::string(rec.payload.begin() + static_cast<long>(i),
                       rec.payload.begin() + static_cast<long>(i + value_len)));

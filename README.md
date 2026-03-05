@@ -13,5 +13,6 @@ Tiny embedded database in C++, goal is: **correctness under crashes**.
 **Crash-safe transactions** using **Write-Ahead Logging (WAL)**:
 - recovery can rebuild state even if you messed it up
 ## Current 
-- WAL reader/writer exists  
-- Tests pass 
+- WAL records are framed and CRC-checked, golden-byte + torn-tail tested.
+- Supports optional sync-on-commit (`fdatasync`/`fsync`) with deterministic hook-based tests.
+- Startup recovery replays only committed transactions and stops safely at truncation/corruption.
