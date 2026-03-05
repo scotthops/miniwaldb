@@ -29,6 +29,9 @@ target_link_libraries(miniwaldb_shell PRIVATE miniwaldb)
 
 # Tests (Catch2 via FetchContent)
 if (MINIWALDB_BUILD_TESTS)
+  include(CTest)
+  enable_testing()
+
   include(FetchContent)
   FetchContent_Declare(
     Catch2
@@ -43,6 +46,5 @@ if (MINIWALDB_BUILD_TESTS)
   )
   target_link_libraries(miniwaldb_tests PRIVATE miniwaldb Catch2::Catch2WithMain)
 
-  include(CTest)
   add_test(NAME miniwaldb_tests COMMAND miniwaldb_tests)
 endif()
