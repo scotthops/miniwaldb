@@ -23,6 +23,7 @@ public:
 private:
   std::string dir_;
   std::unordered_map<std::int64_t, std::string> kv_;
+  std::string snapshot_path_;
   std::string wal_path_;
   std::unique_ptr<wal::WalWriter> wal_writer_;
 
@@ -31,6 +32,7 @@ private:
   wal::TxId current_txid_{0};
 
   void ensure_dir_();
+  void load_snapshot_();
   void recover_from_wal_();
 };
 

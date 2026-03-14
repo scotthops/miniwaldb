@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "db/db.h"
+#include "storage/file_io.h"
 #include "wal/wal_writer.h"
 #include <filesystem>
 #include <fstream>
@@ -17,6 +18,14 @@ std::vector<std::uint8_t> encode_set_payload(std::int64_t key, const std::string
     payload.push_back(static_cast<std::uint8_t>((value_len >> (8 * i)) & 0xFF));
   }
   payload.insert(payload.end(), value.begin(), value.end());
+  return payload;
+}
+
+std::vector<std::uint8_t> encode_delete_payload(std::int64_t key) {
+  std::vector<std::uint8_t> payload;
+  for (int i = 0; i < 8; ++i) {
+    payload.push_back(static_cast<std::uint8_t>((static_cast<std::uint64_t>(key) >> (8 * i)) & 0xFF));
+  }
   return payload;
 }
 
@@ -58,6 +67,54 @@ TEST_CASE("Recovery replays only committed transactions") {
   REQUIRE(reopened.get(1).has_value());
   REQUIRE(reopened.get(1).value() == "v1");
   REQUIRE_FALSE(reopened.get(2).has_value());
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Db constructor loads snapshot state on startup") {
+  const std::string dir = "test_db_constructor_loads_snapshot";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  miniwaldb::storage::KvSnapshot snapshot;
+  snapshot.emplace(201, "snap");
+  snapshot.emplace(202, "state");
+  miniwaldb::storage::save_snapshot((std::filesystem::path(dir) / "snapshot.dat").string(), snapshot);
+
+  miniwaldb::Db db(dir);
+  REQUIRE(db.get(201).has_value());
+  REQUIRE(db.get(201).value() == "snap");
+  REQUIRE(db.get(202).has_value());
+  REQUIRE(db.get(202).value() == "state");
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Db constructor replays WAL on top of snapshot state") {
+  const std::string dir = "test_db_constructor_snapshot_then_wal";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  miniwaldb::storage::KvSnapshot snapshot;
+  snapshot.emplace(301, "from_snapshot");
+  snapshot.emplace(302, "old");
+  miniwaldb::storage::save_snapshot((std::filesystem::path(dir) / "snapshot.dat").string(), snapshot);
+
+  const auto wal_path = (std::filesystem::path(dir) / "wal.log").string();
+  {
+    miniwaldb::wal::WalWriter w(wal_path);
+    using miniwaldb::wal::RecordType;
+    using miniwaldb::wal::WalRecord;
+    w.append(WalRecord{RecordType::Begin, 1, {}});
+    w.append(WalRecord{RecordType::Set, 1, encode_set_payload(302, "new")});
+    w.append(WalRecord{RecordType::Delete, 1, encode_delete_payload(301)});
+    w.append(WalRecord{RecordType::Commit, 1, {}});
+  }
+
+  miniwaldb::Db db(dir);
+  REQUIRE_FALSE(db.get(301).has_value());
+  REQUIRE(db.get(302).has_value());
+  REQUIRE(db.get(302).value() == "new");
 
   std::filesystem::remove_all(dir);
 }

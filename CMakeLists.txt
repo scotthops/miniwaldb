@@ -43,6 +43,7 @@ if (MINIWALDB_BUILD_TESTS)
   add_executable(miniwaldb_tests
       tests/test_wal_roundtrip.cpp
       tests/test_recovery_smoke.cpp
+      tests/test_snapshot_roundtrip.cpp
       tests/test_wal_format_golden.cpp
   )
   target_link_libraries(miniwaldb_tests PRIVATE miniwaldb Catch2::Catch2WithMain)

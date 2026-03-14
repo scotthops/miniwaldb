@@ -1,4 +1,5 @@
 #include "db/db.h"
+#include "storage/file_io.h"
 #include "wal/wal_reader.h"
 #include <filesystem>
 #include <stdexcept>
@@ -9,13 +10,19 @@ namespace miniwaldb {
 
 Db::Db(std::string dir) : dir_(std::move(dir)) {
   ensure_dir_();
+  snapshot_path_ = (std::filesystem::path(dir_) / "snapshot.dat").string();
   wal_path_ = (std::filesystem::path(dir_) / "wal.log").string();
+  load_snapshot_();
   recover_from_wal_();
   wal_writer_ = std::make_unique<wal::WalWriter>(wal_path_);
 }
 
 void Db::ensure_dir_() {
   std::filesystem::create_directories(dir_);
+}
+
+void Db::load_snapshot_() {
+  kv_ = storage::load_snapshot(snapshot_path_);
 }
 
 void Db::begin() {

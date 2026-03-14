@@ -1,8 +1,35 @@
 #include "storage/file_io.h"
+#include <algorithm>
 #include <fstream>
 #include <stdexcept>
 
 namespace miniwaldb::storage {
+
+namespace {
+
+void push_u64(std::vector<std::uint8_t>& out, std::uint64_t v) {
+  for (int i = 0; i < 8; ++i) out.push_back(static_cast<std::uint8_t>((v >> (8 * i)) & 0xFF));
+}
+
+void push_u32(std::vector<std::uint8_t>& out, std::uint32_t v) {
+  for (int i = 0; i < 4; ++i) out.push_back(static_cast<std::uint8_t>((v >> (8 * i)) & 0xFF));
+}
+
+std::uint64_t read_u64(const std::vector<std::uint8_t>& bytes, std::size_t& i) {
+  if (i + 8 > bytes.size()) throw std::runtime_error("truncated snapshot");
+  std::uint64_t v = 0;
+  for (int k = 0; k < 8; ++k) v |= static_cast<std::uint64_t>(bytes[i++]) << (8 * k);
+  return v;
+}
+
+std::uint32_t read_u32(const std::vector<std::uint8_t>& bytes, std::size_t& i) {
+  if (i + 4 > bytes.size()) throw std::runtime_error("truncated snapshot");
+  std::uint32_t v = 0;
+  for (int k = 0; k < 4; ++k) v |= static_cast<std::uint32_t>(bytes[i++]) << (8 * k);
+  return v;
+}
+
+} // namespace
 
 std::vector<std::uint8_t> read_file(const std::string& path) {
   std::ifstream in(path, std::ios::binary);
@@ -21,6 +48,58 @@ void write_file_append(const std::string& path, const std::vector<std::uint8_t>&
   if (!out) throw std::runtime_error("failed to open for append: " + path);
   if (!bytes.empty()) out.write(reinterpret_cast<const char*>(bytes.data()),
                                 static_cast<std::streamsize>(bytes.size()));
+}
+
+void write_file(const std::string& path, const std::vector<std::uint8_t>& bytes) {
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out) throw std::runtime_error("failed to open for write: " + path);
+  if (!bytes.empty()) out.write(reinterpret_cast<const char*>(bytes.data()),
+                                static_cast<std::streamsize>(bytes.size()));
+}
+
+void save_snapshot(const std::string& path, const KvSnapshot& kv) {
+  // Simple snapshot format:
+  // [magic "MWS1":4][entry_count:u32][key:i64][value_len:u32][value bytes]...
+  std::vector<std::uint8_t> bytes = {'M', 'W', 'S', '1'};
+  push_u32(bytes, static_cast<std::uint32_t>(kv.size()));
+
+  std::vector<std::pair<std::int64_t, std::string>> entries(kv.begin(), kv.end());
+  std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+    return a.first < b.first;
+  });
+
+  for (const auto& entry : entries) {
+    push_u64(bytes, static_cast<std::uint64_t>(entry.first));
+    push_u32(bytes, static_cast<std::uint32_t>(entry.second.size()));
+    bytes.insert(bytes.end(), entry.second.begin(), entry.second.end());
+  }
+
+  write_file(path, bytes);
+}
+
+KvSnapshot load_snapshot(const std::string& path) {
+  const auto bytes = read_file(path);
+  if (bytes.empty()) return {};
+  if (bytes.size() < 8) throw std::runtime_error("invalid snapshot");
+  if (!(bytes[0] == 'M' && bytes[1] == 'W' && bytes[2] == 'S' && bytes[3] == '1')) {
+    throw std::runtime_error("invalid snapshot magic");
+  }
+
+  std::size_t i = 4;
+  const auto entry_count = read_u32(bytes, i);
+  KvSnapshot kv;
+
+  for (std::uint32_t entry = 0; entry < entry_count; ++entry) {
+    const auto key = static_cast<std::int64_t>(read_u64(bytes, i));
+    const auto value_len = read_u32(bytes, i);
+    if (i + value_len > bytes.size()) throw std::runtime_error("truncated snapshot");
+    kv[key] = std::string(bytes.begin() + static_cast<long>(i),
+                          bytes.begin() + static_cast<long>(i + value_len));
+    i += value_len;
+  }
+
+  if (i != bytes.size()) throw std::runtime_error("invalid snapshot trailing bytes");
+  return kv;
 }
 
 } // namespace miniwaldb::storage
