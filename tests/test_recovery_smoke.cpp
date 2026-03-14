@@ -114,6 +114,29 @@ TEST_CASE("Checkpoint saves snapshot state for later reopen") {
   std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("Checkpoint resets WAL and snapshot remains sufficient for recovery") {
+  const std::string dir = "test_db_checkpoint_resets_wal";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(410, "base");
+    db.commit();
+    db.checkpoint();
+  }
+
+  const auto wal_path = (std::filesystem::path(dir) / "wal.log").string();
+  REQUIRE(std::filesystem::exists(wal_path));
+  REQUIRE(std::filesystem::file_size(wal_path) == 0);
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE(reopened.get(410).has_value());
+  REQUIRE(reopened.get(410).value() == "base");
+
+  std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Checkpoint during transaction is rejected") {
   const std::string dir = "test_db_checkpoint_during_transaction";
   std::filesystem::remove_all(dir);
@@ -123,6 +146,31 @@ TEST_CASE("Checkpoint during transaction is rejected") {
   db.put(403, "pending");
 
   REQUIRE_THROWS(db.checkpoint());
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Post-checkpoint WAL entries replay on top of snapshot") {
+  const std::string dir = "test_db_checkpoint_then_new_wal";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(420, "before");
+    db.commit();
+    db.checkpoint();
+
+    db.begin();
+    db.put(421, "after");
+    db.commit();
+  }
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE(reopened.get(420).has_value());
+  REQUIRE(reopened.get(420).value() == "before");
+  REQUIRE(reopened.get(421).has_value());
+  REQUIRE(reopened.get(421).value() == "after");
 
   std::filesystem::remove_all(dir);
 }

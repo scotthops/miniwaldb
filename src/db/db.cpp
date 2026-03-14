@@ -50,6 +50,9 @@ void Db::abort() {
 void Db::checkpoint() {
   if (in_tx_) throw std::runtime_error("cannot checkpoint during transaction");
   storage::save_snapshot(snapshot_path_, kv_);
+  wal_writer_.reset();
+  storage::write_file(wal_path_, {});
+  wal_writer_ = std::make_unique<wal::WalWriter>(wal_path_);
 }
 
 void Db::put(std::int64_t key, std::string value) {
