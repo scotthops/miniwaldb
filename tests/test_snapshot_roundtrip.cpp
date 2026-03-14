@@ -27,3 +27,26 @@ TEST_CASE("Loading missing snapshot returns empty state") {
 
   REQUIRE(actual.empty());
 }
+
+TEST_CASE("Saving snapshot replaces prior snapshot without leaving temp file") {
+  const auto path = std::filesystem::temp_directory_path() / "miniwaldb_snapshot_replace.snap";
+  const auto temp_path = path.string() + ".tmp";
+  std::filesystem::remove(path);
+  std::filesystem::remove(temp_path);
+
+  miniwaldb::storage::KvSnapshot first;
+  first.emplace(1, "old");
+  miniwaldb::storage::save_snapshot(path.string(), first);
+
+  miniwaldb::storage::KvSnapshot second;
+  second.emplace(2, "new");
+  second.emplace(3, "state");
+  miniwaldb::storage::save_snapshot(path.string(), second);
+
+  const auto actual = miniwaldb::storage::load_snapshot(path.string());
+
+  REQUIRE(actual == second);
+  REQUIRE_FALSE(std::filesystem::exists(temp_path));
+
+  std::filesystem::remove(path);
+}

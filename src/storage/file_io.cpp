@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
 #include <fcntl.h>
 #include <fstream>
 #include <stdexcept>
@@ -31,6 +32,23 @@ std::uint32_t read_u32(const std::vector<std::uint8_t>& bytes, std::size_t& i) {
   std::uint32_t v = 0;
   for (int k = 0; k < 4; ++k) v |= static_cast<std::uint32_t>(bytes[i++]) << (8 * k);
   return v;
+}
+
+void sync_parent_dir(const std::string& path) {
+  const auto parent = std::filesystem::path(path).parent_path();
+  const auto dir = parent.empty() ? std::filesystem::path(".") : parent;
+  const int fd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+  if (fd == -1) {
+    throw std::runtime_error("failed to open directory for sync: " + dir.string() + ": " + std::strerror(errno));
+  }
+  if (::fsync(fd) != 0) {
+    const std::string err = std::strerror(errno);
+    ::close(fd);
+    throw std::runtime_error("failed to sync directory: " + dir.string() + ": " + err);
+  }
+  if (::close(fd) != 0) {
+    throw std::runtime_error("failed to close directory: " + dir.string() + ": " + std::strerror(errno));
+  }
 }
 
 } // namespace
@@ -97,7 +115,14 @@ void save_snapshot(const std::string& path, const KvSnapshot& kv) {
     bytes.insert(bytes.end(), entry.second.begin(), entry.second.end());
   }
 
-  write_file(path, bytes);
+  const auto temp_path = path + ".tmp";
+  write_file(temp_path, bytes);
+  if (::rename(temp_path.c_str(), path.c_str()) != 0) {
+    const std::string err = std::strerror(errno);
+    std::filesystem::remove(temp_path);
+    throw std::runtime_error("failed to rename snapshot: " + path + ": " + err);
+  }
+  sync_parent_dir(path);
 }
 
 KvSnapshot load_snapshot(const std::string& path) {
