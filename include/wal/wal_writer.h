@@ -15,7 +15,8 @@ enum class RecordType : std::uint8_t {
   Set   = 2,
   Commit= 3,
   Abort = 4,
-  Checkpoint = 5
+  Checkpoint = 5,
+  Delete = 6
 };
 
 struct WalRecord {

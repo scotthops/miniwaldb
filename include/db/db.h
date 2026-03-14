@@ -17,6 +17,7 @@ public:
   void abort();
 
   void put(std::int64_t key, std::string value);
+  void erase(std::int64_t key);
   std::optional<std::string> get(std::int64_t key) const;
 
 private:

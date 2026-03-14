@@ -66,7 +66,18 @@ void Db::recover_from_wal_() {
   wal::WalReader reader(wal_path_);
   const auto records = reader.read_all();
 
-  using PendingOps = std::vector<std::pair<std::int64_t, std::string>>;
+  struct PendingOp {
+    enum class Type {
+      Set,
+      Delete
+    };
+
+    Type type{};
+    std::int64_t key{};
+    std::string value;
+  };
+
+  using PendingOps = std::vector<PendingOp>;
   std::unordered_map<wal::TxId, PendingOps> pending;
 
   for (const auto& rec : records) {
@@ -90,10 +101,24 @@ void Db::recover_from_wal_() {
         value_len |= static_cast<std::uint32_t>(rec.payload[i++]) << (8 * k);
       }
       if (i + value_len > rec.payload.size()) continue;
-      pending_it->second.emplace_back(
+      pending_it->second.push_back(PendingOp{
+          PendingOp::Type::Set,
           key,
           std::string(rec.payload.begin() + static_cast<long>(i),
-                      rec.payload.begin() + static_cast<long>(i + value_len)));
+                      rec.payload.begin() + static_cast<long>(i + value_len))});
+      continue;
+    }
+
+    if (rec.type == wal::RecordType::Delete) {
+      auto pending_it = pending.find(rec.txid);
+      if (pending_it == pending.end()) continue;
+      if (rec.payload.size() != 8) continue;
+      std::size_t i = 0;
+      std::int64_t key = 0;
+      for (int k = 0; k < 8; ++k) {
+        key |= static_cast<std::int64_t>(static_cast<std::uint64_t>(rec.payload[i++]) << (8 * k));
+      }
+      pending_it->second.push_back(PendingOp{PendingOp::Type::Delete, key, {}});
       continue;
     }
 
@@ -101,7 +126,11 @@ void Db::recover_from_wal_() {
       auto it = pending.find(rec.txid);
       if (it != pending.end()) {
         for (const auto& op : it->second) {
-          kv_[op.first] = op.second;
+          if (op.type == PendingOp::Type::Set) {
+            kv_[op.key] = op.value;
+          } else {
+            kv_.erase(op.key);
+          }
         }
         pending.erase(it);
       }
@@ -114,6 +143,17 @@ void Db::recover_from_wal_() {
       if (next_txid_ <= rec.txid) next_txid_ = rec.txid + 1;
     }
   }
+}
+
+void Db::erase(std::int64_t key) {
+  if (in_tx_) {
+    std::vector<std::uint8_t> payload;
+    for (int i = 0; i < 8; ++i) {
+      payload.push_back(static_cast<std::uint8_t>((static_cast<std::uint64_t>(key) >> (8 * i)) & 0xFF));
+    }
+    wal_writer_->append(wal::WalRecord{wal::RecordType::Delete, current_txid_, std::move(payload)});
+  }
+  kv_.erase(key);
 }
 
 } // namespace miniwaldb

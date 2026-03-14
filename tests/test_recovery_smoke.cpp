@@ -62,6 +62,89 @@ TEST_CASE("Recovery replays only committed transactions") {
   std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("Committed delete removes existing key after recovery") {
+  const std::string dir = "test_recovery_committed_delete";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(1, "present");
+    db.commit();
+
+    db.begin();
+    db.erase(1);
+    db.commit();
+  }
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE_FALSE(reopened.get(1).has_value());
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Uncommitted delete does not affect recovered state") {
+  const std::string dir = "test_recovery_uncommitted_delete";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(2, "present");
+    db.commit();
+
+    db.begin();
+    db.erase(2);
+  }
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE(reopened.get(2).has_value());
+  REQUIRE(reopened.get(2).value() == "present");
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Put then delete in same committed transaction leaves key absent") {
+  const std::string dir = "test_recovery_put_then_delete_same_txn";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(3, "temp");
+    db.erase(3);
+    db.commit();
+  }
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE_FALSE(reopened.get(3).has_value());
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Delete then put in same committed transaction leaves latest value present") {
+  const std::string dir = "test_recovery_delete_then_put_same_txn";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(4, "old");
+    db.commit();
+
+    db.begin();
+    db.erase(4);
+    db.put(4, "new");
+    db.commit();
+  }
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE(reopened.get(4).has_value());
+  REQUIRE(reopened.get(4).value() == "new");
+
+  std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Commit without matching begin is ignored safely") {
   const std::string dir = "test_recovery_commit_without_begin";
   std::filesystem::remove_all(dir);
