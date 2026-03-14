@@ -15,6 +15,7 @@ public:
   void begin();
   void commit();
   void abort();
+  void checkpoint();
 
   void put(std::int64_t key, std::string value);
   void erase(std::int64_t key);

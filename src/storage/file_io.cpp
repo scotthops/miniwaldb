@@ -1,7 +1,11 @@
 #include "storage/file_io.h"
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace miniwaldb::storage {
 
@@ -51,10 +55,29 @@ void write_file_append(const std::string& path, const std::vector<std::uint8_t>&
 }
 
 void write_file(const std::string& path, const std::vector<std::uint8_t>& bytes) {
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  if (!out) throw std::runtime_error("failed to open for write: " + path);
-  if (!bytes.empty()) out.write(reinterpret_cast<const char*>(bytes.data()),
-                                static_cast<std::streamsize>(bytes.size()));
+  const int fd = ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+  if (fd == -1) throw std::runtime_error("failed to open for write: " + path + ": " + std::strerror(errno));
+
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const auto n = ::write(fd, bytes.data() + offset, bytes.size() - offset);
+    if (n < 0) {
+      const std::string err = std::strerror(errno);
+      ::close(fd);
+      throw std::runtime_error("failed to write file: " + path + ": " + err);
+    }
+    offset += static_cast<std::size_t>(n);
+  }
+
+  if (::fsync(fd) != 0) {
+    const std::string err = std::strerror(errno);
+    ::close(fd);
+    throw std::runtime_error("failed to sync file: " + path + ": " + err);
+  }
+
+  if (::close(fd) != 0) {
+    throw std::runtime_error("failed to close file: " + path + ": " + std::strerror(errno));
+  }
 }
 
 void save_snapshot(const std::string& path, const KvSnapshot& kv) {

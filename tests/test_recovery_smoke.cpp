@@ -90,6 +90,43 @@ TEST_CASE("Db constructor loads snapshot state on startup") {
   std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("Checkpoint saves snapshot state for later reopen") {
+  const std::string dir = "test_db_checkpoint_saves_snapshot";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(401, "snapshotted");
+    db.put(402, "state");
+    db.commit();
+    db.checkpoint();
+  }
+
+  std::filesystem::remove((std::filesystem::path(dir) / "wal.log").string());
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE(reopened.get(401).has_value());
+  REQUIRE(reopened.get(401).value() == "snapshotted");
+  REQUIRE(reopened.get(402).has_value());
+  REQUIRE(reopened.get(402).value() == "state");
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Checkpoint during transaction is rejected") {
+  const std::string dir = "test_db_checkpoint_during_transaction";
+  std::filesystem::remove_all(dir);
+
+  miniwaldb::Db db(dir);
+  db.begin();
+  db.put(403, "pending");
+
+  REQUIRE_THROWS(db.checkpoint());
+
+  std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Db constructor replays WAL on top of snapshot state") {
   const std::string dir = "test_db_constructor_snapshot_then_wal";
   std::filesystem::remove_all(dir);

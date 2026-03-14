@@ -47,6 +47,11 @@ void Db::abort() {
   in_tx_ = false;
 }
 
+void Db::checkpoint() {
+  if (in_tx_) throw std::runtime_error("cannot checkpoint during transaction");
+  storage::save_snapshot(snapshot_path_, kv_);
+}
+
 void Db::put(std::int64_t key, std::string value) {
   if (in_tx_) {
     std::vector<std::uint8_t> payload;
