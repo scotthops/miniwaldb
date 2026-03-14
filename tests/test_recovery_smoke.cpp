@@ -62,6 +62,62 @@ TEST_CASE("Recovery replays only committed transactions") {
   std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("Db constructor recovers committed data on reopen") {
+  const std::string dir = "test_db_constructor_recovers_committed";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(101, "persisted");
+    db.commit();
+  }
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE(reopened.get(101).has_value());
+  REQUIRE(reopened.get(101).value() == "persisted");
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Db constructor ignores uncommitted transaction on reopen") {
+  const std::string dir = "test_db_constructor_ignores_uncommitted";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(102, "not_committed");
+  }
+
+  miniwaldb::Db reopened(dir);
+  REQUIRE_FALSE(reopened.get(102).has_value());
+
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Db constructor recovery is stable across repeated reopen") {
+  const std::string dir = "test_db_constructor_recovery_stable";
+  std::filesystem::remove_all(dir);
+
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(103, "stable");
+    db.commit();
+  }
+
+  miniwaldb::Db first_reopen(dir);
+  REQUIRE(first_reopen.get(103).has_value());
+  REQUIRE(first_reopen.get(103).value() == "stable");
+
+  miniwaldb::Db second_reopen(dir);
+  REQUIRE(second_reopen.get(103).has_value());
+  REQUIRE(second_reopen.get(103).value() == "stable");
+
+  std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Committed delete removes existing key after recovery") {
   const std::string dir = "test_recovery_committed_delete";
   std::filesystem::remove_all(dir);
