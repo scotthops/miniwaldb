@@ -45,15 +45,17 @@ TEST_CASE("WAL format golden bytes for one deterministic record") {
 
   const auto actual = read_all_bytes(wal_path);
   const std::vector<std::uint8_t> expected = {
-      // Finalize this test:
-      // 1) Run tests once and copy "actual hex".
-      // 2) Paste the bytes here as 0xNN entries.
-      // 3) Remove the temporary forced failure below.
+      0x0d, 0x00, 0x00, 0x00,                         // frame length: 13
+      0x01,                                           // Begin
+      0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // transaction ID: 1
+      0x00, 0x00, 0x00, 0x00,                         // payload length: 0
+      // CRC32 of the 13 record bytes, independently checked with Python zlib.
+      0x68, 0xd3, 0x47, 0x49,                         // CRC32: 0x4947d368
   };
 
   INFO("expected hex: " << hex_dump(expected));
   INFO("actual hex:   " << hex_dump(actual));
 
-  REQUIRE(false); // temporary forced failure for golden-byte capture
+  std::filesystem::remove(wal_path);
   REQUIRE(actual == expected);
 }

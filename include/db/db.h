@@ -12,35 +12,37 @@ class Db {
 public:
   // Opens or creates a database rooted at `dir`.
   // `dir` is the filesystem directory that holds snapshot and WAL files.
-  explicit Db(std::string dir);
+  // Optional hooks are for deterministic tests; defaults use real POSIX I/O.
+  explicit Db(std::string dir, wal::SyncHook sync_hook = {}, wal::WriteHook write_hook = {});
 
-  // Starts a new transaction. Throws if a transaction is already active.
+  // Starts a transaction with a working copy of committed state.
+  // Throws if a transaction is already active.
   void begin();
 
-  // Commits the active transaction by appending a COMMIT record to the WAL.
+  // Appends and syncs a COMMIT record, then publishes the transaction's working state.
   // Throws if no transaction is active.
   void commit();
 
-  // Aborts the active transaction by appending an ABORT record to the WAL.
+  // Appends an ABORT record and discards the transaction's working state.
   // Throws if no transaction is active.
   void abort();
 
-  // Saves the current in-memory state to a durable snapshot and resets the WAL.
+  // Saves committed state to a durable snapshot and resets the WAL.
   // Throws if called while a transaction is active.
   void checkpoint();
 
   // Stores `value` under `key`.
-  // If a transaction is active, the change is also recorded in the WAL.
+  // Requires an active transaction; logs the change and updates its working copy.
   // `key` is the integer key to update.
   // `value` is the string payload to store for that key.
   void put(std::int64_t key, std::string value);
 
   // Removes `key` from the database.
-  // If a transaction is active, the delete is also recorded in the WAL.
+  // Requires an active transaction; logs the delete and updates its working copy.
   // `key` is the integer key to erase.
   void erase(std::int64_t key);
 
-  // Looks up `key` in the current in-memory state.
+  // Reads the working copy during a transaction, or committed state otherwise.
   // Returns the stored string if present, otherwise `std::nullopt`.
   // `key` is the integer key to read.
   std::optional<std::string> get(std::int64_t key) const;
@@ -49,8 +51,11 @@ private:
   // Root directory that owns this database instance's files.
   std::string dir_;
 
-  // Current in-memory key/value state after snapshot load and WAL replay.
+  // Committed state only. Snapshot loading, recovery, and commit update this map.
   std::unordered_map<std::int64_t, std::string> kv_;
+
+  // Private working copy for the active transaction; empty when idle.
+  std::unordered_map<std::int64_t, std::string> working_kv_;
 
   // Full path to the durable snapshot file used by checkpoint/load.
   std::string snapshot_path_;
@@ -60,6 +65,15 @@ private:
 
   // WAL writer used for appending transactional records during runtime.
   std::unique_ptr<wal::WalWriter> wal_writer_;
+
+  // A persistence failure blocks every public operation until destruction/reopen.
+  bool persistence_error_{false};
+  wal::SyncHook sync_hook_;
+  wal::WriteHook write_hook_;
+
+  void check_usable_() const;
+  void open_wal_writer_();
+  void append_wal_(const wal::WalRecord& record);
 
   // True while a transaction is currently open.
   bool in_tx_{false};
@@ -76,7 +90,7 @@ private:
   // Loads snapshot state from `snapshot_path_` into `kv_`.
   void load_snapshot_();
 
-  // Replays committed WAL records from `wal_path_` into `kv_`.
+  // Validates and replays committed WAL records; repairs incomplete EOF tails before append.
   void recover_from_wal_();
 };
 

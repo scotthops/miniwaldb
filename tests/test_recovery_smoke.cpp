@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include "db/db.h"
 #include "storage/file_io.h"
 #include "wal/wal_writer.h"
@@ -45,6 +46,173 @@ void corrupt_last_byte(const std::filesystem::path& path) {
 }
 
 } // namespace
+
+TEST_CASE("Mutations require an active transaction", "[transactions]") {
+  const std::string dir = "test_db_mutations_require_transaction";
+  std::filesystem::remove_all(dir);
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(1, "original");
+    db.commit();
+
+    const auto wal_path = (std::filesystem::path(dir) / "wal.log").string();
+    const auto before = miniwaldb::storage::read_file(wal_path);
+    REQUIRE_THROWS_WITH(db.put(1, "changed"), "not in transaction");
+    REQUIRE_THROWS_WITH(db.put(2, "inserted"), "not in transaction");
+    REQUIRE_THROWS_WITH(db.erase(1), "not in transaction");
+    REQUIRE_THROWS_WITH(db.erase(99), "not in transaction");
+    REQUIRE(db.get(1) == "original");
+    REQUIRE_FALSE(db.get(2).has_value());
+    REQUIRE(miniwaldb::storage::read_file(wal_path) == before);
+  }
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Commit publishes the transaction working state", "[transactions]") {
+  const std::string dir = "test_db_commit_working_state";
+  std::filesystem::remove_all(dir);
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(1, "original");
+    db.put(2, "delete me");
+    db.put(3, "untouched");
+    db.commit();
+
+    db.begin();
+    REQUIRE(db.get(1) == "original");
+    db.put(1, "updated");
+    db.erase(2);
+    db.put(4, "temporary");
+    db.erase(4);
+    db.put(4, "inserted");
+    REQUIRE(db.get(1) == "updated");
+    REQUIRE_FALSE(db.get(2).has_value());
+    REQUIRE(db.get(3) == "untouched");
+    REQUIRE(db.get(4) == "inserted");
+    db.commit();
+
+    REQUIRE(db.get(1) == "updated");
+    REQUIRE_FALSE(db.get(2).has_value());
+    REQUIRE(db.get(3) == "untouched");
+    REQUIRE(db.get(4) == "inserted");
+  }
+  {
+    miniwaldb::Db reopened(dir);
+    REQUIRE(reopened.get(1) == "updated");
+    REQUIRE_FALSE(reopened.get(2).has_value());
+    REQUIRE(reopened.get(3) == "untouched");
+    REQUIRE(reopened.get(4) == "inserted");
+  }
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Abort discards inserts updates and deletes in live state", "[transactions]") {
+  const std::string dir = "test_db_abort_working_state";
+  std::filesystem::remove_all(dir);
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(1, "original");
+    db.put(2, "keep me");
+    db.commit();
+
+    db.begin();
+    db.put(1, "changed");
+    db.put(1, "changed again");
+    db.erase(2);
+    db.put(3, "inserted");
+    REQUIRE(db.get(1) == "changed again");
+    REQUIRE_FALSE(db.get(2).has_value());
+    REQUIRE(db.get(3) == "inserted");
+    db.abort();
+
+    REQUIRE(db.get(1) == "original");
+    REQUIRE(db.get(2) == "keep me");
+    REQUIRE_FALSE(db.get(3).has_value());
+    REQUIRE_THROWS_WITH(db.put(4, "outside"), "not in transaction");
+    REQUIRE_THROWS_WITH(db.erase(1), "not in transaction");
+
+    // The next transaction must start from committed data, not aborted data.
+    db.begin();
+    REQUIRE(db.get(1) == "original");
+    REQUIRE(db.get(2) == "keep me");
+    REQUIRE_FALSE(db.get(3).has_value());
+    db.put(4, "later commit");
+    db.commit();
+  }
+  {
+    miniwaldb::Db reopened(dir);
+    REQUIRE(reopened.get(1) == "original");
+    REQUIRE(reopened.get(2) == "keep me");
+    REQUIRE_FALSE(reopened.get(3).has_value());
+    REQUIRE(reopened.get(4) == "later commit");
+  }
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Aborted changes cannot reach a checkpoint", "[transactions]") {
+  const std::string dir = "test_db_abort_then_checkpoint";
+  std::filesystem::remove_all(dir);
+  {
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(1, "original");
+    db.put(2, "keep me");
+    db.commit();
+    db.checkpoint();
+
+    const auto snapshot_path = (std::filesystem::path(dir) / "snapshot.dat").string();
+    const auto before = miniwaldb::storage::read_file(snapshot_path);
+    db.begin();
+    db.put(1, "changed");
+    db.erase(2);
+    db.put(3, "inserted");
+    REQUIRE_THROWS_WITH(db.checkpoint(), "cannot checkpoint during transaction");
+    REQUIRE(miniwaldb::storage::read_file(snapshot_path) == before);
+    db.abort();
+    db.checkpoint();
+
+    const miniwaldb::storage::KvSnapshot expected{{1, "original"}, {2, "keep me"}};
+    REQUIRE(miniwaldb::storage::load_snapshot(snapshot_path) == expected);
+    REQUIRE(std::filesystem::file_size(std::filesystem::path(dir) / "wal.log") == 0);
+  }
+  {
+    miniwaldb::Db reopened(dir);
+    REQUIRE(reopened.get(1) == "original");
+    REQUIRE(reopened.get(2) == "keep me");
+    REQUIRE_FALSE(reopened.get(3).has_value());
+  }
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Transaction lifecycle rejects invalid transitions", "[transactions]") {
+  const std::string dir = "test_db_transaction_transitions";
+  std::filesystem::remove_all(dir);
+  {
+    miniwaldb::Db db(dir);
+    REQUIRE_THROWS_WITH(db.put(1, "outside"), "not in transaction");
+    REQUIRE_THROWS_WITH(db.erase(1), "not in transaction");
+    REQUIRE_THROWS_WITH(db.commit(), "not in transaction");
+    REQUIRE_THROWS_WITH(db.abort(), "not in transaction");
+    db.begin();
+    db.put(1, "working");
+    REQUIRE_THROWS_WITH(db.begin(), "already in transaction");
+    REQUIRE(db.get(1) == "working");
+    db.abort();
+    REQUIRE_FALSE(db.get(1).has_value());
+
+    db.begin();
+    db.commit(); // An empty transaction is valid.
+    REQUIRE_FALSE(db.get(1).has_value());
+    REQUIRE_THROWS_WITH(db.commit(), "not in transaction");
+    db.begin();
+    db.abort();
+    REQUIRE_THROWS_WITH(db.abort(), "not in transaction");
+  }
+  std::filesystem::remove_all(dir);
+}
 
 TEST_CASE("Recovery replays only committed transactions") {
   const std::string dir = "test_recovery_only_committed";
@@ -508,7 +676,7 @@ TEST_CASE("Committed transaction survives truncated tail") {
   std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("Earlier committed survive later corruption") {
+TEST_CASE("Complete corruption refuses startup and preserves the WAL") {
   const std::string dir = "test_recovery_late_corruption";
   std::filesystem::remove_all(dir);
 
@@ -525,9 +693,9 @@ TEST_CASE("Earlier committed survive later corruption") {
   }
   corrupt_last_byte(wal_path);
 
-  miniwaldb::Db reopened(dir);
-  REQUIRE(reopened.get(11).has_value());
-  REQUIRE(reopened.get(11).value() == "ok");
+  const auto before = miniwaldb::storage::read_file(wal_path);
+  REQUIRE_THROWS(miniwaldb::Db{dir});
+  REQUIRE(miniwaldb::storage::read_file(wal_path) == before);
 
   std::filesystem::remove_all(dir);
 }

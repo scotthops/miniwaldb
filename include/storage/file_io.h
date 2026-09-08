@@ -12,6 +12,9 @@ std::vector<std::uint8_t> read_file(const std::string& path);
 void write_file_append(const std::string& path, const std::vector<std::uint8_t>& bytes);
 void write_file(const std::string& path, const std::vector<std::uint8_t>& bytes);
 
+// Shrinks an existing file and synchronizes its new length; throws on failure.
+void truncate_file(const std::string& path, std::size_t size);
+
 using KvSnapshot = std::unordered_map<std::int64_t, std::string>;
 
 void save_snapshot(const std::string& path, const KvSnapshot& kv);

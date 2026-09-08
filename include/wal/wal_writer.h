@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <cstddef>
+#include <sys/types.h>
 #include <functional>
 #include <string>
 #include <vector>
@@ -15,6 +17,9 @@ using Lsn  = std::uint64_t;
 // Optional durability hook used by tests and sync-on-commit behavior.
 // The hook receives the writer's file descriptor and returns 0 on success.
 using SyncHook = std::function<int(int)>;
+
+// Same return/errno contract as POSIX write(); test hooks must not over-report bytes.
+using WriteHook = std::function<ssize_t(int, const void*, std::size_t)>;
 
 enum class RecordType : std::uint8_t {
   // Marks the start of a transaction.
@@ -56,7 +61,8 @@ public:
   // `sync_hook` optionally overrides the real sync operation, mainly for tests.
   explicit WalWriter(std::string path,
                      bool flush_on_commit = false,
-                     SyncHook sync_hook = {});
+                     SyncHook sync_hook = {},
+                     WriteHook write_hook = {});
 
   // Closes the WAL file descriptor if it is open.
   ~WalWriter();
@@ -69,11 +75,11 @@ public:
   // `rec` is the record to encode and append.
   Lsn append(const WalRecord& rec);
 
-  // Placeholder for general flush support outside commit-specific durability.
-  void flush();          // fsync-ish later
+  // Syncs the WAL regardless of the commit-sync setting.
+  void flush();
 
   // Syncs the WAL to durable storage if sync-on-commit is enabled.
-  void flush_on_commit(); // fsync on commit (placeholder for now)
+  void flush_on_commit();
 
 private:
   // Open file descriptor for the WAL file, or -1 if closed.
@@ -90,6 +96,7 @@ private:
 
   // Sync implementation used by `flush_on_commit()`.
   SyncHook sync_hook_{};
+  WriteHook write_hook_{};
 
   // Opens or creates the WAL file and stores the file descriptor in `fd_`.
   void open_or_create_();

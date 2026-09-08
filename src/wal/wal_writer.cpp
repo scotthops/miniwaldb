@@ -36,10 +36,11 @@ static int real_sync(int fd) {
   return ::fsync(fd);
 }
 
-WalWriter::WalWriter(std::string path, bool flush_on_commit, SyncHook sync_hook)
+WalWriter::WalWriter(std::string path, bool flush_on_commit, SyncHook sync_hook, WriteHook write_hook)
     : path_(std::move(path)),
       flush_on_commit_enabled_(flush_on_commit),
-      sync_hook_(sync_hook ? std::move(sync_hook) : SyncHook(real_sync)) {
+      sync_hook_(sync_hook ? std::move(sync_hook) : SyncHook(real_sync)),
+      write_hook_(write_hook ? std::move(write_hook) : WriteHook(::write)) {
   open_or_create_();
 }
 
@@ -72,25 +73,26 @@ Lsn WalWriter::append(const WalRecord& rec) {
 
   std::size_t offset = 0;
   while (offset < bytes.size()) {
-    const auto n = ::write(fd_, bytes.data() + offset, bytes.size() - offset);
+    const auto n = write_hook_(fd_, bytes.data() + offset, bytes.size() - offset);
     if (n < 0) {
+      if (errno == EINTR) continue;
       throw std::runtime_error("failed to write WAL: " + path_ + ": " + std::strerror(errno));
     }
+    if (n == 0) throw std::runtime_error("WAL write made no progress: " + path_);
     offset += static_cast<std::size_t>(n);
   }
   return next_lsn_++;
 }
 
 void WalWriter::flush() {
-  // placeholder: once we keep an fd open, implement fdatasync/fsync.
+  while (sync_hook_(fd_) != 0) {
+    if (errno == EINTR) continue;
+    throw std::runtime_error("failed to sync WAL: " + path_ + ": " + std::strerror(errno));
+  }
 }
 
 void WalWriter::flush_on_commit() {
-  if (fd_ == -1) return;
-  if (!flush_on_commit_enabled_) return;
-  if (sync_hook_(fd_) != 0) {
-    throw std::runtime_error("failed to sync WAL: " + path_ + ": " + std::strerror(errno));
-  }
+  if (flush_on_commit_enabled_) flush();
 }
 
 } // namespace miniwaldb::wal

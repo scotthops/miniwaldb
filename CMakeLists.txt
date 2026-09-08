@@ -41,6 +41,8 @@ if (MINIWALDB_BUILD_TESTS)
   FetchContent_MakeAvailable(Catch2)
 
   add_executable(miniwaldb_tests
+      tests/test_recovery_tail.cpp
+      tests/test_persistence_boundary.cpp
       tests/test_wal_roundtrip.cpp
       tests/test_recovery_smoke.cpp
       tests/test_snapshot_roundtrip.cpp

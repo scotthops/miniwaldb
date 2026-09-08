@@ -31,41 +31,58 @@ static std::uint32_t crc32_ieee(const std::vector<std::uint8_t>& bytes,
 
 WalReader::WalReader(std::string path) : path_(std::move(path)) {}
 
-std::vector<WalRecord> WalReader::read_all() {
+WalReadResult WalReader::read_all() {
   const auto bytes = storage::read_file(path_);
-  std::vector<WalRecord> out;
+  WalReadResult result;
 
   std::size_t i = 0;
   while (i < bytes.size()) {
-    if (i + 4 > bytes.size()) break; // truncated tail
+    if (bytes.size() - i < 4) {
+      result.stop_reason = ReadStopReason::IncompleteTail;
+      break;
+    }
     const auto frame_len = read_u32(bytes, i);
-    if (frame_len < 13) break;
-    if (i + frame_len + 4 > bytes.size()) break; // truncated tail
+    if (frame_len < 13) {
+      result.stop_reason = ReadStopReason::Corruption;
+      break;
+    }
 
-    const std::size_t frame_start = i;
-    const std::size_t frame_end = i + frame_len;
-    const std::size_t payload_start = i + 1 + 8 + 4;
-    if (payload_start > frame_end) break;
+    // If the header exists, reject contradictory lengths even if the body is short.
+    if (bytes.size() - i >= 13) {
+      std::size_t length_pos = i + 9;
+      if (read_u32(bytes, length_pos) != frame_len - 13) {
+        result.stop_reason = ReadStopReason::Corruption;
+        break;
+      }
+    }
+    const auto remaining = bytes.size() - i;
+    if (frame_len > remaining || remaining - frame_len < 4) {
+      result.stop_reason = ReadStopReason::IncompleteTail;
+      break;
+    }
 
-    std::size_t payload_len_i = i + 1 + 8;
-    const auto payload_len = read_u32(bytes, payload_len_i);
-    if (payload_start + payload_len != frame_end) break;
+    std::size_t crc_pos = i + frame_len;
+    if (read_u32(bytes, crc_pos) != crc32_ieee(bytes, i, frame_len)) {
+      result.stop_reason = ReadStopReason::Corruption;
+      break;
+    }
+    const auto type = bytes[i];
+    if (type < static_cast<std::uint8_t>(RecordType::Begin) ||
+        type > static_cast<std::uint8_t>(RecordType::Delete)) {
+      result.stop_reason = ReadStopReason::Corruption;
+      break;
+    }
 
-    std::size_t crc_i = frame_end;
-    const auto expected_crc = read_u32(bytes, crc_i);
-    const auto computed_crc = crc32_ieee(bytes, frame_start, frame_len);
-    if (computed_crc != expected_crc) break; // torn/corrupt tail
-
-    WalRecord r;
-    r.type = static_cast<RecordType>(bytes[i++]);
-    r.txid = read_u64(bytes, i);
-    const auto n = read_u32(bytes, i);
-    r.payload.assign(bytes.begin() + static_cast<long>(i),
-                     bytes.begin() + static_cast<long>(i + n));
-    i += n + 4; // skip crc
-    out.push_back(std::move(r));
+    WalRecord record;
+    record.type = static_cast<RecordType>(bytes[i++]);
+    record.txid = read_u64(bytes, i);
+    const auto payload_len = read_u32(bytes, i);
+    record.payload.assign(bytes.begin() + i, bytes.begin() + i + payload_len);
+    i += static_cast<std::size_t>(payload_len) + 4; // Skip payload and CRC.
+    result.records.push_back(std::move(record));
+    result.valid_bytes = i;
   }
-  return out;
+  return result;
 }
 
 } // namespace miniwaldb::wal

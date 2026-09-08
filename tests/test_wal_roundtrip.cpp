@@ -16,7 +16,7 @@ TEST_CASE("WAL roundtrip writes and reads records") {
   w.append(WalRecord{RecordType::Commit, 1, {}});
 
   miniwaldb::wal::WalReader r(path);
-  auto recs = r.read_all();
+  auto recs = r.read_all().records;
 
   REQUIRE(recs.size() == 3);
   REQUIRE(recs[0].type == RecordType::Begin);
@@ -46,7 +46,7 @@ TEST_CASE("WAL reader stops at truncated mid-record tail") {
   std::filesystem::resize_file(path, full_size - 8);
 
   miniwaldb::wal::WalReader r(path);
-  auto recs = r.read_all();
+  auto recs = r.read_all().records;
 
   REQUIRE(recs.size() == 2);
   REQUIRE(recs[0].type == RecordType::Begin);
@@ -69,7 +69,7 @@ TEST_CASE("WAL flush_on_commit keeps data readable") {
   w.flush_on_commit();
 
   miniwaldb::wal::WalReader r(path);
-  auto recs = r.read_all();
+  auto recs = r.read_all().records;
 
   REQUIRE(recs.size() == 2);
   REQUIRE(recs[0].type == RecordType::Begin);

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fcntl.h>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -54,14 +55,22 @@ void sync_parent_dir(const std::string& path) {
 } // namespace
 
 std::vector<std::uint8_t> read_file(const std::string& path) {
+  errno = 0;
   std::ifstream in(path, std::ios::binary);
-  if (!in) return {};
+  if (!in) {
+    if (errno == ENOENT) return {};
+    throw std::runtime_error("failed to open for read: " + path);
+  }
   in.seekg(0, std::ios::end);
-  const auto size = static_cast<std::size_t>(in.tellg());
+  const auto end = in.tellg();
+  if (end < 0) throw std::runtime_error("failed to determine file size: " + path);
+  const auto size = static_cast<std::size_t>(end);
   in.seekg(0, std::ios::beg);
+  if (!in) throw std::runtime_error("failed to seek file: " + path);
 
   std::vector<std::uint8_t> buf(size);
   if (size) in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(size));
+  if (!in) throw std::runtime_error("failed to read complete file: " + path);
   return buf;
 }
 
@@ -95,6 +104,31 @@ void write_file(const std::string& path, const std::vector<std::uint8_t>& bytes)
 
   if (::close(fd) != 0) {
     throw std::runtime_error("failed to close file: " + path + ": " + std::strerror(errno));
+  }
+}
+
+void truncate_file(const std::string& path, std::size_t size) {
+  if (size > static_cast<std::uintmax_t>(std::numeric_limits<off_t>::max())) {
+    throw std::runtime_error("WAL truncation offset is too large: " + path);
+  }
+  const int fd = ::open(path.c_str(), O_WRONLY);
+  if (fd == -1) {
+    throw std::runtime_error("failed to open for truncation: " + path + ": " + std::strerror(errno));
+  }
+  while (::ftruncate(fd, static_cast<off_t>(size)) != 0) {
+    if (errno == EINTR) continue;
+    const std::string error = std::strerror(errno);
+    ::close(fd);
+    throw std::runtime_error("failed to truncate WAL: " + path + ": " + error);
+  }
+  while (::fsync(fd) != 0) {
+    if (errno == EINTR) continue;
+    const std::string error = std::strerror(errno);
+    ::close(fd);
+    throw std::runtime_error("failed to sync truncated WAL: " + path + ": " + error);
+  }
+  if (::close(fd) != 0) {
+    throw std::runtime_error("failed to close truncated WAL: " + path + ": " + std::strerror(errno));
   }
 }
 
