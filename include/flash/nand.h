@@ -23,6 +23,8 @@ struct Page {
 struct Block { std::vector<Page> pages; };
 struct Statistics {
   std::size_t logical_writes{}; // Requests, including rejected out-of-space writes.
+  std::size_t successful_logical_writes{};
+  std::size_t gc_copy_programs{};
   std::size_t physical_programs{};
   std::size_t block_erases{};
   std::size_t gc_runs{}; // Successfully completed collections.
@@ -65,6 +67,8 @@ private:
   NandFlash flash_;
   std::map<LogicalPage, Location> mapping_; // Ordered for deterministic inspection.
   std::size_t logical_writes_{0};
+  std::size_t successful_logical_writes_{0};
+  std::size_t gc_copy_programs_{0};
   std::size_t gc_runs_{0};
   std::optional<Location> free_page(std::optional<std::size_t> excluded_block = {}) const;
 };

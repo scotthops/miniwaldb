@@ -94,6 +94,7 @@ void NandSimulator::write(LogicalPage logical, const std::string& value) {
     throw;
   }
   if (old) flash_.invalidate(*old);
+  ++successful_logical_writes_;
 }
 std::size_t NandSimulator::collect() {
   const auto free_total = flash_.statistics().free_pages;
@@ -120,6 +121,7 @@ std::size_t NandSimulator::collect() {
     const auto destination = free_page(*victim);
     if (!destination) throw std::logic_error("GC relocation space invariant failed");
     flash_.program(*destination, *page.logical, page.value);
+    ++gc_copy_programs_;
     mapping_.at(*page.logical) = *destination;
     flash_.invalidate(source);
   }
@@ -130,6 +132,8 @@ std::size_t NandSimulator::collect() {
 Statistics NandSimulator::statistics() const {
   auto result = flash_.statistics();
   result.logical_writes = logical_writes_;
+  result.successful_logical_writes = successful_logical_writes_;
+  result.gc_copy_programs = gc_copy_programs_;
   result.gc_runs = gc_runs_;
   return result;
 }

@@ -46,13 +46,16 @@ add_executable(miniwaldb_workload tools/workload.cpp)
 target_link_libraries(miniwaldb_workload PRIVATE miniwaldb_workload_support)
 
 # In-memory educational flash model; independent of Db and its persistence.
-add_library(miniwaldb_flash src/flash/nand.cpp)
+add_library(miniwaldb_flash src/flash/nand.cpp src/flash/workload.cpp)
 target_include_directories(miniwaldb_flash PUBLIC include)
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(miniwaldb_flash PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 add_executable(miniwaldb_flash_demo tools/flash_demo.cpp)
 target_link_libraries(miniwaldb_flash_demo PRIVATE miniwaldb_flash)
+
+add_executable(miniwaldb_flash_compare tools/flash_compare.cpp)
+target_link_libraries(miniwaldb_flash_compare PRIVATE miniwaldb_flash)
 
 # Tests (Catch2 via FetchContent)
 if (MINIWALDB_BUILD_TESTS)
@@ -68,6 +71,7 @@ if (MINIWALDB_BUILD_TESTS)
   FetchContent_MakeAvailable(Catch2)
 
   add_executable(miniwaldb_tests
+      tests/test_flash_workload.cpp
       tests/test_nand.cpp
       tests/test_workload.cpp
       tests/test_repl.cpp

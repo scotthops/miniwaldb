@@ -70,9 +70,12 @@ At public operation boundaries:
 `valid()` checks page metadata and mapping consistency for tests/debugging. Counter
 statistics include logical write requests (even rejected writes), physical programs
 (host writes plus live GC copies), block erases, successfully completed GC runs,
-current Valid/Invalid/Free counts and blocks containing any programmed page. Reads
+successful logical writes, GC-copy programs, current Valid/Invalid/Free counts and
+blocks containing any programmed page. Reads
 and dumps do not increment counters. Page-state counts are derived by scanning rather
-than maintained through extra mutable counters. Write amplification is not yet reported.
+than maintained through extra mutable counters. The separate comparison runner
+reports physical programs divided by successful logical writes; see
+[flash comparisons](FLASH_COMPARISON.md).
 
 ## Demo trace
 
@@ -93,4 +96,4 @@ It does not simulate NAND bit transitions, ECC, bad blocks, endurance, wear leve
 channels, dies, timing, persistence, concurrent access or a full SSD controller.
 Tests cover physical rules, out-of-place updates, live relocation/counters, repeated
 automatic collection, safe space failure, geometry/index errors and mapping invariants.
-Sequential/random workload comparisons belong to a later checkpoint.
+The separate comparison runner exercises these policies without changing them.

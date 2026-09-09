@@ -123,3 +123,20 @@ uses 3 × 4 for readability. Each page holds a string. GC requires enough free p
 outside its victim for relocation and reports out of space rather than losing data.
 See [flash model and invariants](docs/FLASH.md) for the allocation policy, counters,
 example trace and deliberate differences from real SSDs.
+
+## Sequential versus random flash writes
+
+```sh
+./build/miniwaldb_flash_compare
+```
+
+This runs fresh 8×8 simulators with a common 32-page population, then sequential
+cycling or seeded random updates (seed 12345), for 1,000 successful writes including
+setup. It reports physical programs, GC copies, erases, page-program write
+amplification and final block/page usage. Incomplete runs are explicitly flagged.
+
+The current default run measured sequential WA **1.000** (1,000 physical programs)
+and random WA **1.451** (1,451 programs), with 118 and 176 block erases respectively.
+WA divides by **successful** logical writes, not rejected attempts. These are
+simulator-specific page counts, not real SSD timing or byte amplification. See
+[comparison method, results and limitations](docs/FLASH_COMPARISON.md).
