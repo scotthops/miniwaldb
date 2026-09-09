@@ -596,33 +596,58 @@ TEST_CASE("Two committed transactions replay in WAL order") {
   std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("Running recovery twice does not duplicate effects") {
+TEST_CASE("Mixed snapshot and WAL recovery is stable across repeated opens") {
   const std::string dir = "test_recovery_idempotent_reopen";
   std::filesystem::remove_all(dir);
-
-  const auto wal_path = (std::filesystem::path(dir) / "wal.log").string();
-  std::filesystem::create_directories(dir);
   {
-    miniwaldb::wal::WalWriter w(wal_path);
-    using miniwaldb::wal::RecordType;
-    using miniwaldb::wal::WalRecord;
-    w.append(WalRecord{RecordType::Begin, 1, {}});
-    w.append(WalRecord{RecordType::Set, 1, encode_set_payload(8, "stable")});
-    w.append(WalRecord{RecordType::Commit, 1, {}});
+    miniwaldb::Db db(dir);
+    db.begin();
+    db.put(1, "old");
+    db.put(2, "delete me");
+    db.put(3, "untouched snapshot value");
+    db.commit();
+    db.checkpoint();
+
+    db.begin();
+    db.put(1, "committed update");
+    db.erase(2);
+    db.commit();
+
+    db.begin();
+    db.put(1, "aborted overwrite");
+    db.put(4, "aborted insert");
+    db.erase(3);
+    db.abort();
+
+    db.begin();
+    db.put(1, "unfinished overwrite");
+    db.put(5, "unfinished insert");
+    db.erase(3);
+    // Complete mutation frames, but no COMMIT. Destruction does not commit them.
   }
+  const auto snapshot_path = (std::filesystem::path(dir) / "snapshot.dat").string();
+  const auto wal_path = (std::filesystem::path(dir) / "wal.log").string();
+  const auto snapshot_before = miniwaldb::storage::read_file(snapshot_path);
+  const auto wal_before = miniwaldb::storage::read_file(wal_path);
+  REQUIRE_FALSE(snapshot_before.empty());
+  REQUIRE_FALSE(wal_before.empty());
 
-  miniwaldb::Db first_open(dir);
-  REQUIRE(first_open.get(8).has_value());
-  REQUIRE(first_open.get(8).value() == "stable");
-
-  miniwaldb::Db second_open(dir);
-  REQUIRE(second_open.get(8).has_value());
-  REQUIRE(second_open.get(8).value() == "stable");
-
+  for (int reopen = 0; reopen < 3; ++reopen) {
+    {
+      miniwaldb::Db db(dir);
+      REQUIRE(db.get(1) == "committed update");
+      REQUIRE_FALSE(db.get(2).has_value());
+      REQUIRE(db.get(3) == "untouched snapshot value");
+      REQUIRE_FALSE(db.get(4).has_value());
+      REQUIRE_FALSE(db.get(5).has_value());
+    }
+    REQUIRE(miniwaldb::storage::read_file(snapshot_path) == snapshot_before);
+    REQUIRE(miniwaldb::storage::read_file(wal_path) == wal_before);
+  }
   std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("Truncated commit does not apply transaction") {
+TEST_CASE("Incomplete commit frame does not commit transaction") {
   const std::string dir = "test_recovery_truncated_commit";
   std::filesystem::remove_all(dir);
 

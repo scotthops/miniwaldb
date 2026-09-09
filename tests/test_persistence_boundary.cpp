@@ -5,16 +5,20 @@
 #include "wal/wal_reader.h"
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
+#include <stdexcept>
+#include <sys/wait.h>
 #include <filesystem>
 #include <unistd.h>
 
 namespace {
-// These tests run sequentially; scope cleanup also runs when an assertion fails.
+// Each test gets an isolated directory; cleanup also runs on assertion failure.
 struct TestDirectory {
-  const std::string path = "test_persistence_boundary";
+  std::string path;
   TestDirectory() {
-    std::filesystem::remove_all(path);
-    std::filesystem::create_directories(path);
+    auto pattern = (std::filesystem::temp_directory_path() / "miniwaldb-persistence-XXXXXX").string();
+    if (!::mkdtemp(pattern.data())) throw std::runtime_error("cannot create test directory");
+    path = std::move(pattern);
   }
   ~TestDirectory() { std::filesystem::remove_all(path); }
   std::string wal_path() const { return path + "/wal.log"; }
@@ -62,7 +66,7 @@ TEST_CASE("Db syncs complete transactions including after checkpoint", "[persist
   REQUIRE(reopened.get(7) == "second");
 }
 
-TEST_CASE("Sync failure stops Db but a complete commit can still recover", "[persistence]") {
+TEST_CASE("Complete commit may recover after caller observes sync failure", "[persistence]") {
   TestDirectory dir;
   {
     miniwaldb::Db db(dir.path, [](int) { errno = EIO; return -1; });
@@ -123,7 +127,7 @@ TEST_CASE("Every database WAL append failure stops continued use", "[persistence
   reopened.commit();
 }
 
-TEST_CASE("Partial commit write followed by failure stops Db", "[persistence]") {
+TEST_CASE("Incomplete commit frame does not commit transaction and stops Db", "[persistence]") {
   TestDirectory dir;
   bool commit_started = false;
   {
@@ -210,4 +214,54 @@ TEST_CASE("Checkpoint persistence failure also stops Db", "[persistence]") {
   std::filesystem::create_directory(dir.path + "/snapshot.dat.tmp");
   REQUIRE_THROWS(db.checkpoint());
   require_unusable(db);
+}
+
+TEST_CASE("Process interruption after successful sync does not require graceful destruction", "[persistence][process]") {
+  TestDirectory dir;
+  {
+    miniwaldb::Db db(dir.path);
+    db.begin();
+    db.put(1, "earlier commit");
+    db.put(2, "old value");
+    db.commit();
+  } // No database file descriptors are inherited from the parent.
+
+  const auto child = ::fork();
+  REQUIRE(child >= 0);
+  if (child == 0) {
+    // Do not run Catch2 assertions in the child: report the boundary via exit status.
+    try {
+      miniwaldb::Db db(dir.path, [](int fd) -> int {
+        int result;
+        do { result = ::fsync(fd); } while (result != 0 && errno == EINTR);
+        if (result != 0) ::_exit(81);
+        // COMMIT is synchronized, but the hook has not returned to commit().
+        // _exit bypasses Db/WalWriter destruction and in-memory publication.
+        ::_exit(80);
+      });
+      db.begin();
+      db.put(2, "synced update");
+      db.put(3, "synced insert");
+      db.commit();
+      ::_exit(82); // A normal return from commit means the injection did not run.
+    } catch (...) {
+      ::_exit(83);
+    }
+  }
+
+  int status = 0;
+  pid_t waited;
+  do { waited = ::waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+  REQUIRE(waited == child);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) == 80);
+
+  const auto scan = miniwaldb::wal::WalReader(dir.wal_path()).read_all();
+  REQUIRE(scan.stop_reason == miniwaldb::wal::ReadStopReason::CleanEof);
+  REQUIRE(scan.records.size() == 8);
+  REQUIRE(scan.records.back().type == miniwaldb::wal::RecordType::Commit);
+  miniwaldb::Db reopened(dir.path);
+  REQUIRE(reopened.get(1) == "earlier commit");
+  REQUIRE(reopened.get(2) == "synced update");
+  REQUIRE(reopened.get(3) == "synced insert");
 }

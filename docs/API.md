@@ -60,6 +60,36 @@ Current behavior notes:
 - startup recovery is automatic; there is no separate `open()` call at the moment.
 - the in-memory state is the live source of truth while the process is running.
 
+## Transaction and durability contract — in brief
+
+- Mutations require an active transaction and append mutation WAL records before `Commit`.
+- Successful commit appends `Commit`, synchronizes the WAL, publishes working memory, clears transaction state, then returns.
+- Recovery redoes only complete, valid committed transactions. Without a complete `Commit`, a transaction is ignored; aborted work is discarded.
+- Startup truncates an incomplete EOF suffix to the last valid frame before accepting new appends. Complete corruption is rejected, not silently repaired.
+- An error or missing response does not prove a transaction is absent: a complete commit may still recover. A failed sync alone proves neither outcome.
+- Persistence errors make the current instance unusable until destruction/reopen. There is no automatic rollback of uncertain persistence.
+- Redo recovery is intended to be idempotent. Reopening valid state preserves both its logical contents and its snapshot/WAL bytes.
+- The supported model is Linux/WSL process interruption, one database owner, and the filesystem sync contract. Process exit leaves the kernel running; unconditional hardware or power-loss durability is not claimed.
+
+### Regression evidence
+
+| Behavior | Catch2 regression |
+|---|---|
+| Incomplete frames, repair, continued writes, repeated repaired recovery | `Recovery repairs incomplete tails before subsequent commits` (length/header/payload/CRC/commit sections) |
+| Failure before a complete commit | `Incomplete commit frame does not commit transaction and stops Db` |
+| Complete commit despite observed failure | `Complete commit may recover after caller observes sync failure` |
+| Successful sync followed by lost response and no destruction | `Process interruption after successful sync does not require graceful destruction` |
+| Mixed snapshot/WAL state and unchanged files over repeated opens | `Mixed snapshot and WAL recovery is stable across repeated opens` |
+
+Fault injection uses the existing `WriteHook` and `SyncHook`, plus deliberately
+truncated fixtures. No additional commit stages or production code are needed.
+The process test forks only after the parent's database is closed. In the child,
+the sync hook calls real `fsync`, checks success, then calls `_exit` before returning
+to `commit()`. Thus publication, a successful return, and C++ destruction cannot
+occur. The parent checks the specific exit status with `waitpid` before reopening.
+There are no sleeps or timing-dependent kill points. This demonstrates process
+interruption, not loss of kernel caches or physical power.
+
 ## Commit persistence boundary
 
 For a successful `Db::commit()`:
