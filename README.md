@@ -105,3 +105,21 @@ The directory is retained for inspection. Exit status is 0 only when request IDs
 and reopened database contents verify successfully. Timing includes verification;
 this is a concurrency exercise, not a performance benchmark. See
 [workload design](docs/WORKLOAD.md) for invariants, failure behavior and test coverage.
+
+## Standalone NAND simulator
+
+```sh
+./build/miniwaldb_flash_demo
+```
+
+This independent in-memory model demonstrates Free/Valid/Invalid pages, programming
+only Free pages, whole-block erasure, logical-to-physical mappings, out-of-place updates,
+and garbage collection that moves live pages before erasing a victim. It does not
+replace database WAL or snapshot storage.
+
+The demo prints physical pages, mappings and counters before/after automatic GC,
+then verifies every current value. Geometry defaults to 8 blocks × 8 pages; the demo
+uses 3 × 4 for readability. Each page holds a string. GC requires enough free pages
+outside its victim for relocation and reports out of space rather than losing data.
+See [flash model and invariants](docs/FLASH.md) for the allocation policy, counters,
+example trace and deliberate differences from real SSDs.

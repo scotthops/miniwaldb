@@ -45,6 +45,15 @@ endif()
 add_executable(miniwaldb_workload tools/workload.cpp)
 target_link_libraries(miniwaldb_workload PRIVATE miniwaldb_workload_support)
 
+# In-memory educational flash model; independent of Db and its persistence.
+add_library(miniwaldb_flash src/flash/nand.cpp)
+target_include_directories(miniwaldb_flash PUBLIC include)
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(miniwaldb_flash PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_executable(miniwaldb_flash_demo tools/flash_demo.cpp)
+target_link_libraries(miniwaldb_flash_demo PRIVATE miniwaldb_flash)
+
 # Tests (Catch2 via FetchContent)
 if (MINIWALDB_BUILD_TESTS)
   include(CTest)
@@ -59,6 +68,7 @@ if (MINIWALDB_BUILD_TESTS)
   FetchContent_MakeAvailable(Catch2)
 
   add_executable(miniwaldb_tests
+      tests/test_nand.cpp
       tests/test_workload.cpp
       tests/test_repl.cpp
       tests/test_items_table.cpp
@@ -69,7 +79,7 @@ if (MINIWALDB_BUILD_TESTS)
       tests/test_snapshot_roundtrip.cpp
       tests/test_wal_format_golden.cpp
   )
-  target_link_libraries(miniwaldb_tests PRIVATE miniwaldb_repl miniwaldb_workload_support Catch2::Catch2WithMain)
+  target_link_libraries(miniwaldb_tests PRIVATE miniwaldb_repl miniwaldb_workload_support miniwaldb_flash Catch2::Catch2WithMain)
 
   add_test(NAME miniwaldb_tests COMMAND miniwaldb_tests)
   set_tests_properties(miniwaldb_tests PROPERTIES TIMEOUT 60)
