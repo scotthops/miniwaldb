@@ -4,6 +4,8 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <utility>
+#include <vector>
 #include "wal/wal_writer.h"
 
 namespace miniwaldb {
@@ -46,6 +48,12 @@ public:
   // Returns the stored string if present, otherwise `std::nullopt`.
   // `key` is the integer key to read.
   std::optional<std::string> get(std::int64_t key) const;
+
+  // Copies visible storage entries in unspecified order; checks persistence errors.
+  std::vector<std::pair<std::int64_t, std::string>> entries() const;
+
+  // Status remains inspectable after failure so callers can stop their session.
+  bool has_persistence_error() const noexcept { return persistence_error_; }
 
 private:
   // Root directory that owns this database instance's files.

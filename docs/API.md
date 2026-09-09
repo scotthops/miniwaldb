@@ -4,6 +4,70 @@ This is the current public-ish surface area of `miniwaldb`: small, sturdy, and i
 
 The project is still early, so this is more a field guide than a grand constitutional document. Covers what exists today, how the pieces fit together, and what each part promises.
 
+## Fixed-schema relational API
+
+The logical table is `items(id INTEGER PRIMARY KEY, value TEXT)`. Physical storage
+remains `Db`'s integer/string map. `ItemsTable` is a non-owning wrapper: its `Db`
+must outlive it. Multiple wrappers over the same `Db` view the same single table,
+not separate tables. Transaction ownership stays on `Db`.
+
+Header: [include/table/items_table.h](../include/table/items_table.h)
+
+| Operation | Result and rules |
+|---|---|
+| `insert(id, value)` | Add a row; duplicate ID throws |
+| `update(id, value)` | Replace an existing value; missing ID throws |
+| `erase(id)` | Delete an existing row; missing ID throws |
+| `lookup(id)` | `optional<ItemRow>`; absent ID returns `nullopt` |
+| `scan()` | `vector<ItemRow>` sorted by ascending ID; both columns |
+| `select_value(value)` | Exact, case-sensitive text equality; matching rows sorted by ID |
+| `project_ids(rows)` | `vector<int64_t>` containing only IDs |
+| `project_values(rows)` | `vector<string>` containing only values |
+
+Rows have concrete `id` and `value` fields. Text may be empty; neither column is
+nullable. Projection functions work on scans or selections and preserve input order
+and duplicates, like SQL SELECT without DISTINCT. They have no storage side effects.
+Returning rows already provides both columns; no runtime column-selection enum is needed.
+
+All relational mutations delegate to `Db::put` or `Db::erase` after checking row
+existence via `Db::get`. Thus they require an active transaction and use the same
+WAL and commit/recovery path. Constraint checks occur first: a duplicate/missing-row
+error can precede the no-transaction error. Constraint errors do not end a transaction.
+Reads see working state during a transaction and committed state otherwise. Abort
+discards relational changes just as it discards storage changes. Persistence errors
+also block table operations, including scans.
+
+`Db::entries()` is the only new engine primitive: it checks usability and copies
+visible entries in unspecified order. The table converts those entries to rows and
+sorts them. Results are detached copies, so callers cannot modify the engine through
+returned data. Scan costs O(n log n) time and O(n) result space; selection currently
+uses that sorted scan for straightforward control flow. No additional index is built.
+
+```cpp
+miniwaldb::Db db("./dbdata");
+miniwaldb::ItemsTable items(db);
+db.begin();
+items.insert(7, "blue");
+items.insert(2, "blue");
+db.commit();
+
+auto row = items.lookup(7);                  // ItemRow{7, "blue"}
+auto matching = items.select_value("blue"); // rows 2 and 7
+auto ids = miniwaldb::project_ids(matching); // {2, 7}
+auto values = miniwaldb::project_values(matching); // {"blue", "blue"}
+```
+
+On restart, construct a new `Db` for the same directory, then an `ItemsTable` over
+it. Existing snapshot/WAL recovery reconstructs the same rows without any table-specific
+recovery logic. The public low-level `put` remains an upsert; use `ItemsTable` when
+insert-versus-update constraints matter.
+
+Scope: one fixed table, two columns, integer primary key, text value, lookup/scan/
+selection/projection. No SQL parser, joins, arbitrary schemas, catalogs, optimizer,
+or indexes beyond the existing key lookup. The REPL exposes this table through insert/update/delete/get, scan, select-value,
+ids, and values. Transaction commands and checkpoint call Db directly; see the
+README for syntax and exit behavior.
+
 ## Db
 
 Header: [include/db/db.h](/home/scott/projects/miniwaldb/include/db/db.h)
@@ -38,6 +102,8 @@ void checkpoint();
 void put(std::int64_t key, std::string value);
 void erase(std::int64_t key);
 std::optional<std::string> get(std::int64_t key) const;
+std::vector<std::pair<std::int64_t, std::string>> entries() const;
+bool has_persistence_error() const noexcept;
 ```
 
 What they do:
@@ -55,7 +121,7 @@ Current behavior notes:
 - aborted changes cannot enter a checkpoint: they only existed in the discarded working map.
 - beginning a transaction copies the entire database, trading time and memory for simple rollback behavior.
 - `Db` enables WAL sync-on-commit both at startup and after checkpointing. Optional hooks replace system calls for tests.
-- after a WAL append/sync failure, every public operation throws until the object is destroyed and the database reopened.
+- after a WAL append/sync failure, normal operations throw until destruction/reopen. `has_persistence_error()` remains available for status inspection so the REPL can exit immediately.
 - recovery is redo-only: committed work comes back, uncommitted work does not.
 - startup recovery is automatic; there is no separate `open()` call at the moment.
 - the in-memory state is the live source of truth while the process is running.
@@ -377,3 +443,22 @@ auto value = db.get(1);
 ```
 
 If the process later restarts, `Db("./dbdata")` reloads the snapshot, replays any newer committed WAL records, and picks up where it left off with a surprisingly cheerful amount of persistence for such a compact codebase.
+
+## REPL implementation
+
+`tools/shell.cpp` calls `run_shell("./dbdata", cin, cout, cerr)`. The implementation
+in `tools/repl.cpp` contains a direct command loop and small helpers for IDs, final
+text arguments, extra-argument rejection, and output. `run_shell` owns Db so return
+also closes it; `run_repl` borrows Db for deterministic stream-based tests.
+
+IDs are parsed as a whole token with `from_chars`; invalid suffixes and range errors
+are rejected before table calls. Non-text commands reject extra tokens. Data commands
+use ItemsTable, while begin/commit/abort/checkpoint call Db. Help and exit have no
+storage effects. `get` prints a full row or `not found`; empty query results print
+`(no rows)`; successful mutations and transaction commands print `ok`.
+
+Ordinary errors go to the error stream and the loop continues. The Db persistence
+status distinguishes fatal failures without matching exception text. Fatal errors
+return 1. Normal quit/exit/EOF returns 0, without appending an automatic Commit or
+Abort. Unfinished state disappears when the owning shell closes Db; recovery ignores
+its uncommitted records. The existing failure model and recovery policy are unchanged.

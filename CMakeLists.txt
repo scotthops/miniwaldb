@@ -13,6 +13,7 @@ add_library(miniwaldb
     src/wal/wal_reader.cpp
     src/storage/file_io.cpp
     src/db/db.cpp
+    src/table/items_table.cpp
 )
 
 target_include_directories(miniwaldb PUBLIC include)
@@ -24,8 +25,25 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 # Tools: a tiny REPL/shell
+add_library(miniwaldb_repl tools/repl.cpp)
+target_include_directories(miniwaldb_repl PUBLIC tools)
+target_link_libraries(miniwaldb_repl PUBLIC miniwaldb)
+
 add_executable(miniwaldb_shell tools/shell.cpp)
-target_link_libraries(miniwaldb_shell PRIVATE miniwaldb)
+target_link_libraries(miniwaldb_shell PRIVATE miniwaldb_repl)
+
+# Standalone producer-consumer harness; Db remains single-threaded.
+find_package(Threads REQUIRED)
+add_library(miniwaldb_workload_support
+    src/workload/request_queue.cpp
+    src/workload/workload.cpp
+)
+target_link_libraries(miniwaldb_workload_support PUBLIC miniwaldb Threads::Threads)
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(miniwaldb_workload_support PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_executable(miniwaldb_workload tools/workload.cpp)
+target_link_libraries(miniwaldb_workload PRIVATE miniwaldb_workload_support)
 
 # Tests (Catch2 via FetchContent)
 if (MINIWALDB_BUILD_TESTS)
@@ -41,6 +59,9 @@ if (MINIWALDB_BUILD_TESTS)
   FetchContent_MakeAvailable(Catch2)
 
   add_executable(miniwaldb_tests
+      tests/test_workload.cpp
+      tests/test_repl.cpp
+      tests/test_items_table.cpp
       tests/test_recovery_tail.cpp
       tests/test_persistence_boundary.cpp
       tests/test_wal_roundtrip.cpp
@@ -48,7 +69,8 @@ if (MINIWALDB_BUILD_TESTS)
       tests/test_snapshot_roundtrip.cpp
       tests/test_wal_format_golden.cpp
   )
-  target_link_libraries(miniwaldb_tests PRIVATE miniwaldb Catch2::Catch2WithMain)
+  target_link_libraries(miniwaldb_tests PRIVATE miniwaldb_repl miniwaldb_workload_support Catch2::Catch2WithMain)
 
   add_test(NAME miniwaldb_tests COMMAND miniwaldb_tests)
+  set_tests_properties(miniwaldb_tests PROPERTIES TIMEOUT 60)
 endif()

@@ -126,6 +126,12 @@ std::optional<std::string> Db::get(std::int64_t key) const {
   return it->second;
 }
 
+std::vector<std::pair<std::int64_t, std::string>> Db::entries() const {
+  check_usable_();
+  const auto& state = in_tx_ ? working_kv_ : kv_;
+  return {state.begin(), state.end()};
+}
+
 void Db::recover_from_wal_() {
   wal::WalReader reader(wal_path_);
   const auto result = reader.read_all();
