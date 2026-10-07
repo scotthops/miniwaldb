@@ -61,6 +61,10 @@ std::vector<std::uint8_t> read_file(const std::string& path) {
     if (errno == ENOENT) return {};
     throw std::runtime_error("failed to open for read: " + path);
   }
+  // A directory can open as a stream but report a nonsensical size on Linux.
+  if (!std::filesystem::is_regular_file(path)) {
+    throw std::runtime_error("not a regular persistence file: " + path);
+  }
   in.seekg(0, std::ios::end);
   const auto end = in.tellg();
   if (end < 0) throw std::runtime_error("failed to determine file size: " + path);

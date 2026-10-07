@@ -6,6 +6,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MINIWALDB_BUILD_TESTS "Build tests" ON)
+option(MINIWALDB_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(MINIWALDB_BUILD_DEBUG_CASES "Expose intentionally broken manual debugging targets" OFF)
+
+# Directory-wide instrumentation covers project libraries, executables and Catch2.
+if (MINIWALDB_ENABLE_SANITIZERS)
+  if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(FATAL_ERROR "Sanitizers require GCC or Clang on the supported Linux/WSL target")
+  endif()
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
+# Explicit target builds only: never part of ALL or registered with CTest.
+if (MINIWALDB_BUILD_DEBUG_CASES)
+  add_executable(miniwaldb_debug_asan EXCLUDE_FROM_ALL tools/debug_cases/asan_bounds.cpp)
+  add_executable(miniwaldb_debug_ubsan EXCLUDE_FROM_ALL tools/debug_cases/ubsan_overflow.cpp)
+  add_executable(miniwaldb_debug_gdb EXCLUDE_FROM_ALL tools/debug_cases/gdb_index.cpp)
+endif()
+
 
 # Library target (your database code)
 add_library(miniwaldb

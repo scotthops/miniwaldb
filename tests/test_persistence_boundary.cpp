@@ -194,7 +194,8 @@ TEST_CASE("File reads distinguish missing files from access errors", "[persisten
   REQUIRE(miniwaldb::storage::read_file(dir.path + "/missing").empty());
   miniwaldb::storage::write_file(dir.path + "/regular", {1, 2, 3});
   REQUIRE_THROWS(miniwaldb::storage::read_file(dir.path + "/regular/child"));
-  REQUIRE_THROWS(miniwaldb::storage::read_file(dir.path));
+  REQUIRE_THROWS_WITH(miniwaldb::storage::read_file(dir.path),
+                      "not a regular persistence file: " + dir.path);
   SECTION("snapshot path is a directory") {
     std::filesystem::create_directory(dir.path + "/snapshot.dat");
     REQUIRE_THROWS(miniwaldb::Db{dir.path});

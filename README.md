@@ -140,3 +140,16 @@ and random WA **1.451** (1,451 programs), with 118 and 176 block erases respecti
 WA divides by **successful** logical writes, not rejected attempts. These are
 simulator-specific page counts, not real SSD timing or byte amplification. See
 [comparison method, results and limitations](docs/FLASH_COMPARISON.md).
+
+## Debugging and CI
+
+`MINIWALDB_ENABLE_SANITIZERS=ON` enables combined AddressSanitizer/UndefinedBehaviorSanitizer
+instrumentation for normal tests. A Linux GitHub Actions matrix configures, builds
+and runs those tests with sanitizers both OFF and ON on pushes and pull requests.
+
+Separate, opt-in `tools/debug_cases` executables demonstrate a heap bounds error,
+signed overflow and a GDB assertion walkthrough. They are excluded from default
+builds and CTest. See [reproducible debugging instructions](docs/DEBUGGING.md) for
+exact commands, observed diagnostics, the real file-read issue discovered during
+sanitizer testing, and tool limitations. A hosted CI pass must be checked after the
+workflow is committed and pushed.
