@@ -85,6 +85,12 @@ corruption also fails without opening a prompt. Quit, exit, and EOF return statu
 and never commit pending changes: the database closes, and restart ignores the
 transaction without a Commit record. There are no confirmation prompts.
 
+For a persistent stdin/stdout client, run `miniwaldb_shell --machine --dir DIRECTORY`.
+This reuses the same commands and transactions, replaces prompts with flushed JSON
+responses, and reports readiness after recovery. See the [machine protocol and
+WSL integration notes](docs/MACHINE_PROTOCOL.md). Without flags, human mode and
+`./dbdata` remain the defaults.
+
 ## Producer-consumer workload
 
 ```sh

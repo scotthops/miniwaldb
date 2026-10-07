@@ -94,6 +94,7 @@ if (MINIWALDB_BUILD_TESTS)
       tests/test_nand.cpp
       tests/test_workload.cpp
       tests/test_repl.cpp
+      tests/test_machine_repl.cpp
       tests/test_items_table.cpp
       tests/test_recovery_tail.cpp
       tests/test_persistence_boundary.cpp
@@ -106,4 +107,13 @@ if (MINIWALDB_BUILD_TESTS)
 
   add_test(NAME miniwaldb_tests COMMAND miniwaldb_tests)
   set_tests_properties(miniwaldb_tests PROPERTIES TIMEOUT 60)
+
+  # Optional test-only dependency; the shell itself has no JSON/Python dependency.
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if (Python3_Interpreter_FOUND)
+    add_test(NAME miniwaldb_machine_pipes
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_machine_pipes.py
+                --shell $<TARGET_FILE:miniwaldb_shell>)
+    set_tests_properties(miniwaldb_machine_pipes PROPERTIES TIMEOUT 60)
+  endif()
 endif()
